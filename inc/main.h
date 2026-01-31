@@ -1,0 +1,13 @@
+#ifndef MAIN_H
+#define MAIN_H
+
+#include "lexer/lexer.h"
+#include "lexer/token_debug.h"
+#include "vent/vent.h"
+#include "vent/print.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sysexits.h>
+
+#endif /* MAIN_H */

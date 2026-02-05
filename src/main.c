@@ -42,6 +42,8 @@ int main(int argc, char **argv) {
             print.lexer_debug = true;
         } else if (strcmp(argv[i], "--parser-debug") == 0) {
             print.parser_debug = true;
+        } else if (strcmp(argv[i], "--semantics-debug") == 0) {
+            print.semantics_debug = true;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
         } else {
@@ -78,6 +80,7 @@ int main(int argc, char **argv) {
         root = parse_program(&parser);
 
         ast_debug_print(root, &print);
+        semantics_debug_print_tree(parser.current_scope, root, &print);
     }
 
     vent_flush(&vent);

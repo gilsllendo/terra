@@ -78,6 +78,7 @@ static bool match(Lexer *l, char expected) {
 }
 
 static TokenKind keyword_kind(const char *s, unsigned len) {
+    if (len == 3 && strncmp(s, "var", 3) == 0) return TOKEN_VAR;
     if (len == 4 && strncmp(s, "func", 4) == 0)   return TOKEN_FUNCTION;
     if (len == 6 && strncmp(s, "return", 6) == 0) return TOKEN_RETURN;
     if (len == 2 && strncmp(s, "if", 2) == 0)     return TOKEN_IF;
@@ -188,6 +189,7 @@ void lexer_run(Lexer *l) {
             case '}': tok.kind = TOKEN_RBRACE; break;
             case ',': tok.kind = TOKEN_COMMA; break;
             case ';': tok.kind = TOKEN_SEMICOLON; break;
+            case ':': tok.kind = TOKEN_COLON; break;
 
             case '=': 
                 tok.kind = match(l, '=') ? TOKEN_EQUAL_EQUAL : TOKEN_ASSIGN; 

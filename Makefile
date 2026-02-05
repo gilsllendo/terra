@@ -8,7 +8,7 @@ DEBUG   := -g3 -DDEBUG
 BUILD_DIR := build
 BIN_DIR   := $(BUILD_DIR)/bin
 OBJ_DIR   := $(BUILD_DIR)/obj
-INC_FLAGS := -Iinc -Iinc/lexer -Iinc/vent
+INC_FLAGS := -Iinc -Iinc/lexer -Iinc/vent -Iinc/parser
 CFLAGS    := $(CSTD) $(WARN) $(INC_FLAGS) -MMD -MP
 LDFLAGS   := 
 TARGET    := $(BIN_DIR)/terra
@@ -31,11 +31,11 @@ debug: $(TARGET)
 
 run: debug
 	@echo "[i] Running $(TARGET)"
-	@./$(TARGET) $(TEST_FILE) --lexer-debug
+	@./$(TARGET) $(TEST_FILE) --lexer-debug --parser-debug
 
 memcheck: debug
 	@echo "[i] Running Valgrind"
-	@$(VALGRIND) ./$(TARGET) $(TEST_FILE) --lexer-debug
+	@$(VALGRIND) ./$(TARGET) $(TEST_FILE) --lexer-debug --parser-debug
 
 lint:
 	@echo "[i] Running Linter"
@@ -56,3 +56,4 @@ $(OBJ_DIR)/%.o: %.c
 clean:
 	@echo "[i] Cleaning..."
 	@rm -rf $(BUILD_DIR)
+	

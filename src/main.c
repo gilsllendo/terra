@@ -34,11 +34,14 @@ char* read_file(const char* path) {
 
 int main(int argc, char **argv) {
     const char *filepath = NULL;
+
     PrintContext print = {0};
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--lexer-debug") == 0) {
             print.lexer_debug = true;
+        } else if (strcmp(argv[i], "--parser-debug") == 0) {
+            print.parser_debug = true;
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
         } else {
@@ -48,7 +51,6 @@ int main(int argc, char **argv) {
 
     if (filepath == NULL) {
         fprintf(stderr, "Usage: terra [file] [options]\n");
-        
         return 64;
     }
 
@@ -57,6 +59,9 @@ int main(int argc, char **argv) {
     VentContext vent;
     vent_context_init(&vent);
 
+    ASTArena arena;
+    ast_arena_init(&arena);
+
     TokenBuffer tokens;
     token_buffer_init(&tokens, &vent);
 
@@ -64,14 +69,22 @@ int main(int argc, char **argv) {
     lexer_init(&lexer, source, filepath, &tokens, &vent);
     lexer_run(&lexer);
 
-    if (print.lexer_debug) {
-        lexer_debug_print_tokens(&tokens, &print);
+    lexer_debug_print_tokens(&tokens, &print);
+
+    AST* root = NULL;
+    if (vent.error_count == 0) {
+        Parser parser;
+        parser_init(&parser, &tokens, &vent, &arena);
+        root = parse_program(&parser);
+
+        ast_debug_print(root, &print);
     }
 
     vent_flush(&vent);
 
     free(source);
     token_buffer_free(&tokens);
+    ast_arena_free(&arena);
     vent_context_free(&vent);
 
     return vent.error_count ? 1 : 0;

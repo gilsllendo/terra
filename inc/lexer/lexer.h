@@ -22,6 +22,7 @@ typedef enum {
     TOKEN_MULTIPLY,
     TOKEN_DIVIDE,
     TOKEN_ASSIGN,
+    TOKEN_VAR,
     TOKEN_EQUAL_EQUAL,
     TOKEN_BANG_EQUAL,
     TOKEN_LPAREN,
@@ -30,6 +31,7 @@ typedef enum {
     TOKEN_RBRACE,
     TOKEN_COMMA,
     TOKEN_SEMICOLON,
+    TOKEN_COLON,
     TOKEN_EOF,
     TOKEN_ERROR,
 } TokenKind;

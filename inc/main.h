@@ -9,5 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
+#include "parser.h"
+#include "ast_debug.h"
 
 #endif /* MAIN_H */

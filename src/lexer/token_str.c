@@ -10,6 +10,7 @@ const char *token_kind_str(TokenKind kind) {
         case TOKEN_FUNCTION:   return "FUNCTION";
         case TOKEN_RETURN:     return "RETURN";
         case TOKEN_PLUS:       return "PLUS";
+        case TOKEN_VAR:        return "VAR";
         case TOKEN_MINUS:      return "MINUS";
         case TOKEN_MULTIPLY:   return "MULTIPLY";
         case TOKEN_DIVIDE:     return "DIVIDE";
@@ -20,6 +21,7 @@ const char *token_kind_str(TokenKind kind) {
         case TOKEN_RBRACE:     return "RBRACE";
         case TOKEN_COMMA:      return "COMMA";
         case TOKEN_SEMICOLON:  return "SEMICOLON";
+        case TOKEN_COLON:      return "COLON";
         case TOKEN_EOF:        return "EOF";
         case TOKEN_ERROR:      return "ERROR";
         default:               return "UNKNOWN";

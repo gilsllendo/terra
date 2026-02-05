@@ -9,7 +9,8 @@
 #include <string.h>
 
 typedef enum {
-    VENT_STAGE_LEXER
+    VENT_STAGE_LEXER,
+    VENT_STAGE_PARSER,
 } VentStage;
 
 typedef enum {

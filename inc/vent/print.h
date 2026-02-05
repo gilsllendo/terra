@@ -7,6 +7,7 @@
 
 typedef struct {
     bool lexer_debug;
+    bool parser_debug;
 } PrintContext;
 
 #endif /* VENT_PRINT_H */

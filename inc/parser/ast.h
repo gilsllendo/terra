@@ -39,6 +39,7 @@ typedef struct AST {
         struct {
             struct AST** stmts;
             size_t count;
+            struct Scope* scope;
         } block;
 
         struct { 

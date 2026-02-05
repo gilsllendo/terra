@@ -5,8 +5,11 @@
 #include <stdbool.h>
 #include "lexer.h"
 #include "vent.h"
+#include "symbol.h"
 #include "ast.h"
 #include "ast_buffer.h"
+#include <string.h>
+#include "intern.h"
 
 typedef struct {
     TokenBuffer *tokens;
@@ -14,6 +17,8 @@ typedef struct {
     ASTArena *arena;
     int pos;
     bool panic_mode;
+    Scope *current_scope;
+    StringInterner interner;
 } Parser;
 
 void parser_init(Parser *p, TokenBuffer *tokens, VentContext *vent, ASTArena *arena);

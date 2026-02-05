@@ -11,5 +11,6 @@
 #include <sysexits.h>
 #include "parser.h"
 #include "ast_debug.h"
+#include "symbol_debug.h"
 
 #endif /* MAIN_H */

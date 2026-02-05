@@ -24,6 +24,7 @@ bool vent_emit(VentContext *ctx, VentStage stage, VentSeverity sev, VentSpan spa
         fprintf(stderr, "FATAL ERROR: Execution halted.\n");
         exit(1);
     }
+
     return true;
 }
 

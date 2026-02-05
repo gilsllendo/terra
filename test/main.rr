@@ -7,6 +7,12 @@ func main(): i64 {
 
     s, isGood = bo(a, c)
 
+    func add(): i8 {
+        a: i8 = 12
+
+        return a
+    }
+
     return 0
 }
 

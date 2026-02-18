@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "type.h"
 #include "lexer.h"
 
 typedef enum {
@@ -28,7 +29,7 @@ typedef enum {
 typedef struct AST {
     ASTKind kind;
     Token token;
-    struct AST *resolved_type;
+    ValueType resolved_type;
     union {
         struct {
             struct AST** targets;

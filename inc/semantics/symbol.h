@@ -4,18 +4,20 @@
 #include "ast.h"
 #include "ast_buffer.h"
 #include <string.h>
+#include "type.h"
 
 typedef enum {
     SYM_VAR,
     SYM_FUNC,
     SYM_TYPE,
-    SYM_PARAM
+    SYM_PARAM,
 } SymbolKind;
 
 typedef struct Symbol {
     const char* name;
     SymbolKind kind;
     AST* decl_node;
+    ValueType type_id;
     struct Symbol* next;
 } Symbol;
 

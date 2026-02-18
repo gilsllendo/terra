@@ -1,0 +1,725 @@
+diff --git a/inc/main.h b/inc/main.h
+index 7a704eb..af9729b 100644
+--- a/inc/main.h
++++ b/inc/main.h
+@@ -12,5 +12,7 @@
+ #include "parser.h"
+ #include "ast_debug.h"
+ #include "symbol_debug.h"
++#include "semantics.h"
++#include "semantics_debug.h"
+ 
+ #endif /* MAIN_H */
+diff --git a/inc/parser/ast.h b/inc/parser/ast.h
+index a840132..e4881df 100644
+--- a/inc/parser/ast.h
++++ b/inc/parser/ast.h
+@@ -3,6 +3,7 @@
+ 
+ #include <stdint.h>
+ #include <stddef.h>
++#include "type.h"
+ #include "lexer.h"
+ 
+ typedef enum {
+@@ -28,7 +29,7 @@ typedef enum {
+ typedef struct AST {
+     ASTKind kind;
+     Token token;
+-    struct AST *resolved_type;
++    ValueType resolved_type;
+     union {
+         struct {
+             struct AST** targets;
+diff --git a/inc/semantics/semantics.h b/inc/semantics/semantics.h
+new file mode 100644
+index 0000000..e72d211
+--- /dev/null
++++ b/inc/semantics/semantics.h
+@@ -0,0 +1,11 @@
++#ifndef TERRA_SEMANTICS_H
++#define TERRA_SEMANTICS_H
++
++#include "ast.h"
++#include "symbol.h"
++#include "vent.h"
++#include "intern.h"
++
++void terra_analyze(AST* root, Scope* global_scope, VentContext* vent, ASTArena* arena, StringInterner* si);
++
++#endif
+\ No newline at end of file
+diff --git a/inc/semantics/semantics_debug.h b/inc/semantics/semantics_debug.h
+new file mode 100644
+index 0000000..54ddade
+--- /dev/null
++++ b/inc/semantics/semantics_debug.h
+@@ -0,0 +1,9 @@
++#ifndef TERRA_SEMANTICS_DEBUG_H
++#define TERRA_SEMANTICS_DEBUG_H
++
++#include "ast.h"
++#include "semantics.h"
++
++void terra_debug_semantics(AST* node, Scope* scope, int depth);
++
++#endif
+\ No newline at end of file
+diff --git a/inc/semantics/symbol.h b/inc/semantics/symbol.h
+index 1a438fd..b2f50ca 100644
+--- a/inc/semantics/symbol.h
++++ b/inc/semantics/symbol.h
+@@ -4,18 +4,20 @@
+ #include "ast.h"
+ #include "ast_buffer.h"
+ #include <string.h>
++#include "type.h"
+ 
+ typedef enum {
+     SYM_VAR,
+     SYM_FUNC,
+     SYM_TYPE,
+-    SYM_PARAM
++    SYM_PARAM,
+ } SymbolKind;
+ 
+ typedef struct Symbol {
+     const char* name;
+     SymbolKind kind;
+     AST* decl_node;
++    ValueType type_id;
+     struct Symbol* next;
+ } Symbol;
+ 
+diff --git a/inc/semantics/type.h b/inc/semantics/type.h
+new file mode 100644
+index 0000000..e47f09e
+--- /dev/null
++++ b/inc/semantics/type.h
+@@ -0,0 +1,14 @@
++#ifndef SEM_TYPE_H
++#define SEM_TYPE_H
++
++typedef enum {
++    TYPE_UNKNOWN,
++    TYPE_I8, TYPE_I16, TYPE_I32, TYPE_I64,
++    TYPE_U8, TYPE_U16, TYPE_U32, TYPE_U64,
++    TYPE_BOOL,
++    TYPE_VOID,
++    TYPE_UNTYPED_INT,
++    TYPE_ERROR
++} ValueType;
++
++#endif /* SEM_TYPE_H */
+diff --git a/inc/vent/vent.h b/inc/vent/vent.h
+index 40db6b6..4d675e7 100644
+--- a/inc/vent/vent.h
++++ b/inc/vent/vent.h
+@@ -11,6 +11,7 @@
+ typedef enum {
+     VENT_STAGE_LEXER,
+     VENT_STAGE_PARSER,
++    VENT_STAGE_SEMANTICS,
+ } VentStage;
+ 
+ typedef enum {
+diff --git a/src/main.c b/src/main.c
+index c09e0ca..0ff8b1b 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -74,15 +74,22 @@ int main(int argc, char **argv) {
+     lexer_debug_print_tokens(&tokens, &print);
+ 
+     AST* root = NULL;
+-    if (vent.error_count == 0) {
+         Parser parser;
++
++    if (vent.error_count == 0) {
+         parser_init(&parser, &tokens, &vent, &arena);
+         root = parse_program(&parser);
+ 
+         ast_debug_print(root, &print);
+         semantics_debug_print_tree(parser.current_scope, root, &print);
++
++        if (vent.error_count == 0) {
++            terra_analyze(root, parser.current_scope, &vent, &arena, &parser.interner);
++        }
+     }
+ 
++    terra_debug_semantics(root, parser.current_scope, 0);
++
+     vent_flush(&vent);
+ 
+     free(source);
+diff --git a/src/parser/ast_debug.c b/src/parser/ast_debug.c
+index fdaf9fa..9cd5cde 100644
+--- a/src/parser/ast_debug.c
++++ b/src/parser/ast_debug.c
+@@ -51,6 +51,16 @@ static void ast_print_recursive(const AST* node, int level) {
+ 
+             break;
+ 
++        case AST_SHORT_DECL:
++            printf(" (Type: %.*s)\n", (int)node->as.short_decl.type->token.length, node->as.short_decl.type->token.start);
++
++            print_indent(level + 1);
++            printf("NAME: %.*s\n", (int)node->as.short_decl.name->token.length, node->as.short_decl.name->token.start);
++
++            // TODO: Add value
++
++            break;
++
+         case AST_ASSIGN:
+             printf(" (Targets: %zu)\n", node->as.assignment.target_count);
+ 
+diff --git a/src/parser/parser.c b/src/parser/parser.c
+index 71ce2b6..7e880d2 100644
+--- a/src/parser/parser.c
++++ b/src/parser/parser.c
+@@ -7,6 +7,7 @@ static AST* parse_statement(Parser* p);
+ static AST* parse_block(Parser* p);
+ static AST* parse_function(Parser* p);
+ static AST* parse_var_decl(Parser* p);
++static AST* parse_block_with_scope(Parser* p, Scope* override_scope);
+ 
+ void parser_init(Parser *p, TokenBuffer *tokens, VentContext *vent, ASTArena *arena) {
+     p->tokens = tokens;
+@@ -18,10 +19,25 @@ void parser_init(Parser *p, TokenBuffer *tokens, VentContext *vent, ASTArena *ar
+     intern_init(&p->interner, arena);
+     p->current_scope = scope_new(arena, NULL);
+ 
+-    const char* builtins[] = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "bool", "void"}; // TODO: I have to implement type cheking system
++    typedef struct {
++        const char* name;
++        ValueType id;
++    } BuiltinType;
++
++    BuiltinType builtins[] = {
++        {"i8", TYPE_I8}, {"i16", TYPE_I16}, {"i32", TYPE_I32}, {"i64", TYPE_I64},
++        {"u8", TYPE_U8}, {"u16", TYPE_U16}, {"u32", TYPE_U32}, {"u64", TYPE_U64},
++        {"bool", TYPE_BOOL}, {"void", TYPE_VOID}
++    };
++
+     for (int i = 0; i < 10; i++) {
+-        const char* name = intern_string(&p->interner, arena, builtins[i], strlen(builtins[i]));
+-        scope_define(arena, p->current_scope, name, SYM_VAR, NULL); 
++        const char* name = intern_string(&p->interner, arena, builtins[i].name, strlen(builtins[i].name));
++        
++        scope_define(arena, p->current_scope, name, SYM_TYPE, NULL); 
++        
++        Symbol* s = scope_lookup(p->current_scope, name);
++
++        if (s) s->type_id = builtins[i].id;
+     }
+ }
+ 
+@@ -151,7 +167,16 @@ static AST* parse_var_decl(Parser *p) {
+     AST* node = ast_new(p->arena, AST_VAR_DECL);
+ 
+     node->as.var_decl.type = ast_new(p->arena, AST_IDENTIFIER);
+-    node->as.var_decl.type->token = consume(p, TOKEN_IDENTIFIER, "Expected type.");
++
++    Token type_tok = consume(p, TOKEN_IDENTIFIER, "Expected type.");
++    const char* type_name = intern_string(&p->interner, p->arena, type_tok.start, type_tok.length);
++    Symbol* type_sym = scope_lookup(p->current_scope, type_name);
++
++    if (type_sym && type_sym->kind != SYM_TYPE) {
++        vent_emit(p->vent, VENT_STAGE_PARSER, VENT_SEV_ERROR, type_tok.span, "Identifier is not a valid type.");
++    }
++
++    node->as.var_decl.type->token = type_tok;
+     
+     consume(p, TOKEN_COLON, "Expected ':'.");
+     
+@@ -219,7 +244,17 @@ static AST* parse_function(Parser* p) {
+             AST* group = ast_new(p->arena, AST_PARAM_GROUP);
+ 
+             group->as.var_decl.type = ast_new(p->arena, AST_IDENTIFIER);
+-            group->as.var_decl.type->token = consume(p, TOKEN_IDENTIFIER, "Expected type.");
++
++            Token type_tok = consume(p, TOKEN_IDENTIFIER, "Expected type.");
++            const char* type_name = intern_string(&p->interner, p->arena, type_tok.start, type_tok.length);
++            Symbol* type_sym = scope_lookup(p->current_scope, type_name);
++
++            if (type_sym && type_sym->kind != SYM_TYPE) {
++                vent_emit(p->vent, VENT_STAGE_PARSER, VENT_SEV_ERROR, type_tok.span, "Identifier is not a valid type.");
++            }
++
++            group->as.var_decl.type->token  = type_tok;
++
+             consume(p, TOKEN_COLON, "Expected ':'.");
+ 
+             size_t ncap = 4;
+@@ -283,7 +318,7 @@ static AST* parse_function(Parser* p) {
+         node->as.func.return_types[node->as.func.return_count++] = t;
+     }
+ 
+-    node->as.func.body = parse_block(p);
++    node->as.func.body = parse_block_with_scope(p, p->current_scope);
+     p->current_scope = outer_scope;
+ 
+     return node;
+@@ -339,7 +374,16 @@ static AST* parse_statement(Parser *p) {
+             
+             consume(p, TOKEN_COLON, "Expected ':'.");
+             n->as.short_decl.type = ast_new(p->arena, AST_IDENTIFIER);
+-            n->as.short_decl.type->token = consume(p, TOKEN_IDENTIFIER, "Expected type.");
++            
++            Token type_tok = consume(p, TOKEN_IDENTIFIER, "Expected type.");
++            const char* type_name = intern_string(&p->interner, p->arena, type_tok.start, type_tok.length);
++            Symbol* type_sym = scope_lookup(p->current_scope, type_name);
++
++            if (type_sym && type_sym->kind != SYM_TYPE) {
++                vent_emit(p->vent, VENT_STAGE_PARSER, VENT_SEV_ERROR, type_tok.span, "Identifier is not a valid type.");
++            }
++
++            n->as.short_decl.type->token = type_tok;
+             
+             consume(p, TOKEN_ASSIGN, "Expected '='.");
+             n->as.short_decl.value = parse_expression(p);
+@@ -367,14 +411,23 @@ static AST* parse_statement(Parser *p) {
+     return parse_expression(p);
+ }
+ 
+-static AST* parse_block(Parser* p) {
++static AST* parse_block_with_scope(Parser* p, Scope* override_scope) {
+     consume(p, TOKEN_LBRACE, "Expected '{'.");
+     Scope* outer = p->current_scope;
+-    p->current_scope = scope_new(p->arena, outer);
++    
++    // If we were passed a scope (from parse_function), use it.
++    // Otherwise, create a new child scope.
++    if (override_scope) {
++        p->current_scope = override_scope;
++    } else {
++        p->current_scope = scope_new(p->arena, outer);
++    }
+ 
+     AST* node = ast_new(p->arena, AST_BLOCK);
+     node->as.block.scope = p->current_scope;
+ 
++
++
+     size_t cap = 8;
+     node->as.block.stmts = ast_arena_alloc_array(p->arena, cap, sizeof(AST*));
+     node->as.block.count = 0;
+@@ -398,6 +451,10 @@ static AST* parse_block(Parser* p) {
+     return node;
+ }
+ 
++static AST* parse_block(Parser* p) {
++    return parse_block_with_scope(p, NULL);
++}
++
+ AST* parse_program(Parser* p) {
+     AST* prog = ast_new(p->arena, AST_PROGRAM);
+     size_t cap = 4;
+diff --git a/src/semantics/semantics.c b/src/semantics/semantics.c
+new file mode 100644
+index 0000000..8fa0c33
+--- /dev/null
++++ b/src/semantics/semantics.c
+@@ -0,0 +1,253 @@
++#include "semantics.h"
++
++#include <stdio.h>
++#include <string.h>
++
++typedef struct {
++    VentContext * vent;
++    Scope * current_scope;
++    ASTArena * arena;
++    StringInterner * si;
++}
++Analyzer;
++
++static void analyze_node(Analyzer * a, AST * node);
++
++static Symbol * lookup_symbol(Analyzer * a, Token tok) {
++    if (!tok.start || tok.length == 0) return NULL;
++    const char * name = intern_string(a -> si, a -> arena, tok.start, tok.length);
++    Symbol * s = scope_lookup(a -> current_scope, name);
++
++    return s;
++}
++static bool types_match(ValueType expected, ValueType actual) {
++    if (actual == TYPE_ERROR || expected == TYPE_ERROR) return true;
++    if (expected == actual) return true;
++    if (actual == TYPE_UNTYPED_INT) return (expected >= TYPE_I8 && expected <= TYPE_U64);
++
++    return false;
++}
++
++static
++const char * type_to_name(ValueType type) {
++    switch (type) {
++    case TYPE_I8:
++        return "i8";
++    case TYPE_I32:
++        return "i32";
++    case TYPE_I64:
++        return "i64";
++    case TYPE_U8:
++        return "u8";
++    case TYPE_BOOL:
++        return "bool";
++    case TYPE_UNTYPED_INT:
++        return "{untyped int}";
++    default:
++        return "unknown";
++    }
++}
++
++static void resolve_headers_recursive(Analyzer * a, AST * node) {
++    if (!node) return;
++
++    if (node -> kind == AST_FUNC_DECL) {
++        Token name_tok = node -> as.func.name -> token;
++        const char * f_name = intern_string(a -> si, a -> arena, name_tok.start, name_tok.length);
++        printf("[Pass 1] Resolving Function: %s\n", f_name);
++
++        Symbol * f_sym = scope_lookup(a -> current_scope, f_name);
++        if (f_sym) f_sym -> decl_node = node;
++
++        for (size_t i = 0; i < node -> as.func.return_count; i++) {
++            AST * ret_type_node = node -> as.func.return_types[i];
++            Symbol * r_sym = lookup_symbol(a, ret_type_node -> token);
++            if (r_sym) {
++                ret_type_node -> resolved_type = r_sym -> type_id;
++                if (i == 0 && f_sym) f_sym -> type_id = r_sym -> type_id;
++            }
++        }
++
++        if (node -> as.func.body && node -> as.func.body -> as.block.scope) {
++            Scope * f_scope = node -> as.func.body -> as.block.scope;
++
++            for (size_t i = 0; i < node -> as.func.param_count; i++) {
++                AST * group = node -> as.func.params[i];
++
++                Symbol * t_sym = lookup_symbol(a, group -> as.var_decl.type -> token);
++                ValueType tid = t_sym ? t_sym -> type_id : TYPE_ERROR;
++                group -> as.var_decl.type -> resolved_type = tid;
++
++                for (size_t j = 0; j < group -> as.var_decl.name_count; j++) {
++                    AST * p_node = group -> as.var_decl.names[j];
++                    const char * p_str = intern_string(a -> si, a -> arena, p_node -> token.start, p_node -> token.length);
++
++                    Symbol * p_sym = scope_lookup_current(f_scope, p_str);
++                    if (p_sym) {
++                        p_sym -> type_id = tid;
++                        p_node -> resolved_type = tid;
++                        printf("  -> Parameter '%s' matched in scope and set to type %s\n", p_str, type_to_name(tid));
++                    } else {
++                        printf("  !! ERROR: Parameter '%s' NOT FOUND in function scope %p\n", p_str, (void * ) f_scope);
++                    }
++                }
++            }
++
++            Scope * prev = a -> current_scope;
++            a -> current_scope = f_scope;
++            resolve_headers_recursive(a, node -> as.func.body);
++            a -> current_scope = prev;
++        }
++    } else if (node -> kind == AST_BLOCK || node -> kind == AST_PROGRAM) {
++        for (size_t i = 0; i < node -> as.block.count; i++)
++            resolve_headers_recursive(a, node -> as.block.stmts[i]);
++    }
++}
++
++static void analyze_node(Analyzer * a, AST * node) {
++    if (!node) return;
++
++    switch (node -> kind) {
++    case AST_PROGRAM:
++    case AST_BLOCK: {
++        Scope * prev = a -> current_scope;
++        if (node -> as.block.scope) a -> current_scope = node -> as.block.scope;
++        for (size_t i = 0; i < node -> as.block.count; i++) analyze_node(a, node -> as.block.stmts[i]);
++        a -> current_scope = prev;
++
++        break;
++    }
++
++    case AST_FUNC_DECL: {
++        if (node -> as.func.body && node -> as.func.body -> as.block.scope) {
++            Scope * prev = a -> current_scope;
++            a -> current_scope = node -> as.func.body -> as.block.scope;
++            analyze_node(a, node -> as.func.body);
++            a -> current_scope = prev;
++        }
++
++        break;
++    }
++
++    case AST_VAR_DECL: {
++        Symbol * t_sym = lookup_symbol(a, node -> as.var_decl.type -> token);
++        ValueType tid = t_sym ? t_sym -> type_id : TYPE_ERROR;
++        node -> as.var_decl.type -> resolved_type = tid;
++
++        for (size_t i = 0; i < node -> as.var_decl.name_count; i++) {
++            AST * name_node = node -> as.var_decl.names[i];
++            Symbol * v_sym = lookup_symbol(a, name_node -> token);
++            if (v_sym) v_sym -> type_id = tid;
++            name_node -> resolved_type = tid;
++        }
++        break;
++    }
++
++    case AST_SHORT_DECL: {
++        analyze_node(a, node -> as.short_decl.value);
++        ValueType val_type = node -> as.short_decl.value -> resolved_type;
++
++        Symbol * t_sym = lookup_symbol(a, node -> as.short_decl.type -> token);
++        ValueType final_type = t_sym ? t_sym -> type_id : val_type;
++
++        node -> as.short_decl.type -> resolved_type = final_type;
++        Symbol * v_sym = lookup_symbol(a, node -> as.short_decl.name -> token);
++        if (v_sym) v_sym -> type_id = final_type;
++        node -> as.short_decl.name -> resolved_type = final_type;
++
++        break;
++    }
++
++    case AST_ASSIGN: {
++        analyze_node(a, node -> as.assignment.value);
++        AST * rhs = node -> as.assignment.value;
++
++        if (rhs && rhs -> kind == AST_CALL) {
++            Symbol * f_sym = lookup_symbol(a, rhs -> as.call.callee -> token);
++            if (f_sym && f_sym -> decl_node) {
++                AST * decl = f_sym -> decl_node;
++                for (size_t i = 0; i < node -> as.assignment.target_count; i++) {
++                    if (i >= decl -> as.func.return_count) break;
++
++                    AST * target = node -> as.assignment.targets[i];
++                    ValueType rt = decl -> as.func.return_types[i] -> resolved_type;
++
++                    Symbol * ts = lookup_symbol(a, target -> token);
++                    if (ts) ts -> type_id = rt;
++
++                    target -> resolved_type = rt;
++                }
++            }
++        } else {
++            for (size_t i = 0; i < node -> as.assignment.target_count; i++) {
++                AST * target = node -> as.assignment.targets[i];
++                Symbol * ts = lookup_symbol(a, target -> token);
++
++                if (ts) {
++                    if (ts -> type_id == TYPE_ERROR) ts -> type_id = rhs -> resolved_type;
++                    target -> resolved_type = ts -> type_id;
++                }
++            }
++        }
++
++        break;
++    }
++
++    case AST_BINARY: {
++        analyze_node(a, node -> as.binary.left);
++        analyze_node(a, node -> as.binary.right);
++        ValueType lt = node -> as.binary.left -> resolved_type;
++        ValueType rt = node -> as.binary.right -> resolved_type;
++
++        if (!types_match(lt, rt) && !types_match(rt, lt)) {
++            vent_emit(a -> vent, VENT_STAGE_SEMANTICS, VENT_SEV_ERROR, node -> token.span, "Type Mismatch");
++        }
++        node -> resolved_type = (lt == TYPE_UNTYPED_INT) ? rt : lt;
++
++        break;
++    }
++
++    case AST_IDENTIFIER: {
++        Symbol * sym = lookup_symbol(a, node -> token);
++        node -> resolved_type = sym ? sym -> type_id : TYPE_ERROR;
++        break;
++    }
++
++    case AST_INTEGER:
++        node -> resolved_type = TYPE_UNTYPED_INT;
++        break;
++    case AST_CALL: {
++        for (size_t i = 0; i < node -> as.call.arg_count; i++)
++            analyze_node(a, node -> as.call.args[i]);
++
++        Symbol * s = lookup_symbol(a, node -> as.call.callee -> token);
++        if (s && s -> decl_node && s -> decl_node -> as.func.return_count > 0) {
++            node -> resolved_type = s -> decl_node -> as.func.return_types[0] -> resolved_type;
++        } else {
++            node -> resolved_type = s ? s -> type_id : TYPE_ERROR;
++        }
++        node -> as.call.callee -> resolved_type = node -> resolved_type;
++
++        break;
++    }
++    case AST_RETURN: {
++        for (size_t i = 0; i < node -> as.ret.count; i++) analyze_node(a, node -> as.ret.values[i]);
++
++        break;
++    }
++    default:
++        break;
++    }
++}
++
++void terra_analyze(AST * root, Scope * global, VentContext * vent, ASTArena * arena, StringInterner * si) {
++    Analyzer a = {
++        vent,
++        global,
++        arena,
++        si
++    };
++
++    resolve_headers_recursive( & a, root);
++    analyze_node( & a, root);
++}
+diff --git a/src/semantics/semantics_debug.c b/src/semantics/semantics_debug.c
+new file mode 100644
+index 0000000..d4ab0d9
+--- /dev/null
++++ b/src/semantics/semantics_debug.c
+@@ -0,0 +1,106 @@
++#include "semantics_debug.h"
++#include <stdio.h>
++#include <inttypes.h>
++
++static const char* type_to_name(ValueType type) {
++    switch (type) {
++        case TYPE_I8: return "i8"; case TYPE_I32: return "i32";
++        case TYPE_I64: return "i64"; case TYPE_U8: return "u8";
++        case TYPE_BOOL: return "bool"; case TYPE_UNTYPED_INT: return "{untyped int}";
++        default: return "unknown";
++    }
++}
++
++static void print_indent(int depth) {
++    for (int i = 0; i < depth; i++) printf("  │ ");
++}
++
++void terra_debug_semantics(AST* node, Scope* scope, int depth) {
++    printf("\n=== Annotated Semantic AST ===\n");
++
++    print_debug(node, scope, depth);
++
++    printf("==============================\n");
++}
++
++static void print_debug(AST* node, Scope* scope, int depth) {
++        if (!node) return;
++
++
++    if (node->kind == AST_PROGRAM) {
++        printf("PROGRAM (Analyzed)\n");
++        for (size_t i = 0; i < node->as.block.count; i++)
++            terra_debug_semantics(node->as.block.stmts[i], scope, depth + 1);
++        return;
++    }
++
++    print_indent(depth);
++
++    switch (node->kind) {
++        case AST_FUNC_DECL: {
++            printf("FUNC_DECL: %.*s\n", (int)node->as.func.name->token.length, node->as.func.name->token.start);
++            print_indent(depth + 1);
++            printf("└─ Returns: (");
++            for (size_t i = 0; i < node->as.func.return_count; i++)
++                printf("%s%s", (i > 0 ? ", " : ""), type_to_name(node->as.func.return_types[i]->resolved_type));
++            printf(")\n");
++            Scope* inner = node->as.func.body->as.block.scope ? node->as.func.body->as.block.scope : scope;
++            terra_debug_semantics(node->as.func.body, inner, depth + 1);
++            break;
++        }
++
++        case AST_IDENTIFIER: {
++            char name[128]; snprintf(name, 128, "%.*s", (int)node->token.length, node->token.start);
++            Symbol* s = scope_lookup(scope, name);
++            // We prioritize the Symbol Table's type for the debug output
++            ValueType display_type = (s && s->type_id != 0) ? s->type_id : node->resolved_type;
++            printf("IDENTIFIER: %s [Type: %s]\n", name, type_to_name(display_type));
++            break;
++        }
++
++        case AST_BINARY:
++            printf("BINARY: %.*s [Result: %s]\n", (int)node->token.length, node->token.start, type_to_name(node->resolved_type));
++            terra_debug_semantics(node->as.binary.left, scope, depth + 1);
++            terra_debug_semantics(node->as.binary.right, scope, depth + 1);
++            break;
++
++        case AST_CALL: {
++            char buf[256]; snprintf(buf, 256, "%.*s", (int)node->as.call.callee->token.length, node->as.call.callee->token.start);
++            Symbol* f = scope_lookup(scope, buf);
++            printf("CALL: %s", buf);
++            if (f && f->decl_node) {
++                printf(" [Returns: (");
++                for (size_t i = 0; i < f->decl_node->as.func.return_count; i++)
++                    printf("%s%s", (i > 0 ? ", " : ""), type_to_name(f->decl_node->as.func.return_types[i]->resolved_type));
++                printf(")]\n");
++            } else printf(" [Type: %s]\n", type_to_name(node->resolved_type));
++            for (size_t i = 0; i < node->as.call.arg_count; i++) terra_debug_semantics(node->as.call.args[i], scope, depth + 1);
++            break;
++        }
++
++        case AST_VAR_DECL:
++            printf("VAR_DECL [Type: %s]\n", type_to_name(node->as.var_decl.type->resolved_type));
++            for (size_t i = 0; i < node->as.var_decl.name_count; i++)
++                terra_debug_semantics(node->as.var_decl.names[i], scope, depth + 1);
++            break;
++
++        case AST_BLOCK: {
++            printf("BLOCK [Scope: %p]\n", (void*)node->as.block.scope);
++            Scope* s = node->as.block.scope ? node->as.block.scope : scope;
++            for (size_t i = 0; i < node->as.block.count; i++) terra_debug_semantics(node->as.block.stmts[i], s, depth + 1);
++            break;
++        }
++
++        case AST_INTEGER: printf("INTEGER: %" PRId64 " [Type: %s]\n", node->as.int_val, type_to_name(node->resolved_type)); break;
++        case AST_ASSIGN:
++            printf("ASSIGN [Targets: %zu]\n", node->as.assignment.target_count);
++            for (size_t i = 0; i < node->as.assignment.target_count; i++) terra_debug_semantics(node->as.assignment.targets[i], scope, depth + 1);
++            terra_debug_semantics(node->as.assignment.value, scope, depth + 1);
++            break;
++        case AST_RETURN:
++            printf("RETURN [Values: %zu]\n", node->as.ret.count);
++            for (size_t i = 0; i < node->as.ret.count; i++) terra_debug_semantics(node->as.ret.values[i], scope, depth + 1);
++            break;
++        default: break;
++    }
++}
+diff --git a/src/semantics/symbol_str.c b/src/semantics/symbol_str.c
+index 48048c7..042d248 100644
+--- a/src/semantics/symbol_str.c
++++ b/src/semantics/symbol_str.c
+@@ -5,6 +5,7 @@ const char* symbol_kind_str(SymbolKind kind) {
+         case SYM_VAR:   return "VARIABLE";
+         case SYM_FUNC:  return "FUNCTION";
+         case SYM_PARAM: return "PARAMETER";
++        case SYM_TYPE:  return "TYPE";
+         default:        return "UNKNOWN";
+     }
+ }
+diff --git a/test/main.rr b/test/main.rr
+index 30743bc..6755b7c 100644
+--- a/test/main.rr
++++ b/test/main.rr
+@@ -3,9 +3,11 @@ func main(): i64 {
+ 
+     c: u8 = 12
+ 
++    c = 124
++
+     a = add(a, add(a, b))
+ 
+-    s, isGood = bo(a, c)
++    s, isGood = bo(c, c)
+ 
+     func add(): i8 {
+         a: i8 = 12
+@@ -20,7 +22,7 @@ func add(i8: a, b): i8 {
+     return a + b
+ }
+ 
+-func bo(i8: a, u8: b): (i8, bool) {
++func bo(u8: a, u8: b): (i8, bool) {
+     var bool: c
+ 
+     return a + b, c

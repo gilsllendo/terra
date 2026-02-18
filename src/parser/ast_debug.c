@@ -51,6 +51,16 @@ static void ast_print_recursive(const AST* node, int level) {
 
             break;
 
+        case AST_SHORT_DECL:
+            printf(" (Type: %.*s)\n", (int)node->as.short_decl.type->token.length, node->as.short_decl.type->token.start);
+
+            print_indent(level + 1);
+            printf("NAME: %.*s\n", (int)node->as.short_decl.name->token.length, node->as.short_decl.name->token.start);
+
+            // TODO: Add value
+
+            break;
+
         case AST_ASSIGN:
             printf(" (Targets: %zu)\n", node->as.assignment.target_count);
 

@@ -74,14 +74,21 @@ int main(int argc, char **argv) {
     lexer_debug_print_tokens(&tokens, &print);
 
     AST* root = NULL;
-    if (vent.error_count == 0) {
         Parser parser;
+
+    if (vent.error_count == 0) {
         parser_init(&parser, &tokens, &vent, &arena);
         root = parse_program(&parser);
 
         ast_debug_print(root, &print);
         semantics_debug_print_tree(parser.current_scope, root, &print);
+
+        if (vent.error_count == 0) {
+            terra_analyze(root, parser.current_scope, &vent, &arena, &parser.interner);
+        }
     }
+
+    terra_debug_semantics(root, parser.current_scope, 0);
 
     vent_flush(&vent);
 

@@ -12,5 +12,7 @@
 #include "parser.h"
 #include "ast_debug.h"
 #include "symbol_debug.h"
+#include "semantics.h"
+#include "semantics_debug.h"
 
 #endif /* MAIN_H */

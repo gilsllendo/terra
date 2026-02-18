@@ -7,6 +7,7 @@ static AST* parse_statement(Parser* p);
 static AST* parse_block(Parser* p);
 static AST* parse_function(Parser* p);
 static AST* parse_var_decl(Parser* p);
+static AST* parse_block_with_scope(Parser* p, Scope* override_scope);
 
 void parser_init(Parser *p, TokenBuffer *tokens, VentContext *vent, ASTArena *arena) {
     p->tokens = tokens;
@@ -18,10 +19,25 @@ void parser_init(Parser *p, TokenBuffer *tokens, VentContext *vent, ASTArena *ar
     intern_init(&p->interner, arena);
     p->current_scope = scope_new(arena, NULL);
 
-    const char* builtins[] = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "bool", "void"}; // TODO: I have to implement type cheking system
+    typedef struct {
+        const char* name;
+        ValueType id;
+    } BuiltinType;
+
+    BuiltinType builtins[] = {
+        {"i8", TYPE_I8}, {"i16", TYPE_I16}, {"i32", TYPE_I32}, {"i64", TYPE_I64},
+        {"u8", TYPE_U8}, {"u16", TYPE_U16}, {"u32", TYPE_U32}, {"u64", TYPE_U64},
+        {"bool", TYPE_BOOL}, {"void", TYPE_VOID}
+    };
+
     for (int i = 0; i < 10; i++) {
-        const char* name = intern_string(&p->interner, arena, builtins[i], strlen(builtins[i]));
-        scope_define(arena, p->current_scope, name, SYM_VAR, NULL); 
+        const char* name = intern_string(&p->interner, arena, builtins[i].name, strlen(builtins[i].name));
+        
+        scope_define(arena, p->current_scope, name, SYM_TYPE, NULL); 
+        
+        Symbol* s = scope_lookup(p->current_scope, name);
+
+        if (s) s->type_id = builtins[i].id;
     }
 }
 
@@ -151,7 +167,16 @@ static AST* parse_var_decl(Parser *p) {
     AST* node = ast_new(p->arena, AST_VAR_DECL);
 
     node->as.var_decl.type = ast_new(p->arena, AST_IDENTIFIER);
-    node->as.var_decl.type->token = consume(p, TOKEN_IDENTIFIER, "Expected type.");
+
+    Token type_tok = consume(p, TOKEN_IDENTIFIER, "Expected type.");
+    const char* type_name = intern_string(&p->interner, p->arena, type_tok.start, type_tok.length);
+    Symbol* type_sym = scope_lookup(p->current_scope, type_name);
+
+    if (type_sym && type_sym->kind != SYM_TYPE) {
+        vent_emit(p->vent, VENT_STAGE_PARSER, VENT_SEV_ERROR, type_tok.span, "Identifier is not a valid type.");
+    }
+
+    node->as.var_decl.type->token = type_tok;
     
     consume(p, TOKEN_COLON, "Expected ':'.");
     
@@ -219,7 +244,17 @@ static AST* parse_function(Parser* p) {
             AST* group = ast_new(p->arena, AST_PARAM_GROUP);
 
             group->as.var_decl.type = ast_new(p->arena, AST_IDENTIFIER);
-            group->as.var_decl.type->token = consume(p, TOKEN_IDENTIFIER, "Expected type.");
+
+            Token type_tok = consume(p, TOKEN_IDENTIFIER, "Expected type.");
+            const char* type_name = intern_string(&p->interner, p->arena, type_tok.start, type_tok.length);
+            Symbol* type_sym = scope_lookup(p->current_scope, type_name);
+
+            if (type_sym && type_sym->kind != SYM_TYPE) {
+                vent_emit(p->vent, VENT_STAGE_PARSER, VENT_SEV_ERROR, type_tok.span, "Identifier is not a valid type.");
+            }
+
+            group->as.var_decl.type->token  = type_tok;
+
             consume(p, TOKEN_COLON, "Expected ':'.");
 
             size_t ncap = 4;
@@ -283,7 +318,7 @@ static AST* parse_function(Parser* p) {
         node->as.func.return_types[node->as.func.return_count++] = t;
     }
 
-    node->as.func.body = parse_block(p);
+    node->as.func.body = parse_block_with_scope(p, p->current_scope);
     p->current_scope = outer_scope;
 
     return node;
@@ -339,7 +374,16 @@ static AST* parse_statement(Parser *p) {
             
             consume(p, TOKEN_COLON, "Expected ':'.");
             n->as.short_decl.type = ast_new(p->arena, AST_IDENTIFIER);
-            n->as.short_decl.type->token = consume(p, TOKEN_IDENTIFIER, "Expected type.");
+            
+            Token type_tok = consume(p, TOKEN_IDENTIFIER, "Expected type.");
+            const char* type_name = intern_string(&p->interner, p->arena, type_tok.start, type_tok.length);
+            Symbol* type_sym = scope_lookup(p->current_scope, type_name);
+
+            if (type_sym && type_sym->kind != SYM_TYPE) {
+                vent_emit(p->vent, VENT_STAGE_PARSER, VENT_SEV_ERROR, type_tok.span, "Identifier is not a valid type.");
+            }
+
+            n->as.short_decl.type->token = type_tok;
             
             consume(p, TOKEN_ASSIGN, "Expected '='.");
             n->as.short_decl.value = parse_expression(p);
@@ -367,13 +411,20 @@ static AST* parse_statement(Parser *p) {
     return parse_expression(p);
 }
 
-static AST* parse_block(Parser* p) {
+static AST* parse_block_with_scope(Parser* p, Scope* override_scope) {
     consume(p, TOKEN_LBRACE, "Expected '{'.");
     Scope* outer = p->current_scope;
-    p->current_scope = scope_new(p->arena, outer);
+    
+    if (override_scope) {
+        p->current_scope = override_scope;
+    } else {
+        p->current_scope = scope_new(p->arena, outer);
+    }
 
     AST* node = ast_new(p->arena, AST_BLOCK);
     node->as.block.scope = p->current_scope;
+
+
 
     size_t cap = 8;
     node->as.block.stmts = ast_arena_alloc_array(p->arena, cap, sizeof(AST*));
@@ -396,6 +447,10 @@ static AST* parse_block(Parser* p) {
     p->current_scope = outer;
 
     return node;
+}
+
+static AST* parse_block(Parser* p) {
+    return parse_block_with_scope(p, NULL);
 }
 
 AST* parse_program(Parser* p) {

@@ -3,9 +3,11 @@ func main(): i64 {
 
     c: u8 = 12
 
+    c = 124
+
     a = add(a, add(a, b))
 
-    s, isGood = bo(a, c)
+    s, isGood = bo(c, c)
 
     func add(): i8 {
         a: i8 = 12
@@ -20,7 +22,7 @@ func add(i8: a, b): i8 {
     return a + b
 }
 
-func bo(i8: a, u8: b): (i8, bool) {
+func bo(u8: a, u8: b): (i8, bool) {
     var bool: c
 
     return a + b, c

@@ -11,6 +11,7 @@
 typedef enum {
     VENT_STAGE_LEXER,
     VENT_STAGE_PARSER,
+    VENT_STAGE_SEMANTICS,
 } VentStage;
 
 typedef enum {

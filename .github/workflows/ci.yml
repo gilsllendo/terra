@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc \
+            make \
+            cppcheck \
+            valgrind
+
+      - name: Build Terra
+        run: make
+
+      - name: Build Terra Debug
+        run: make debug
+
+      - name: Run linter
+        run: make lint
+
+      - name: Memmory check
+        if: github.ref == 'refs/heads/main'
+        run: make memcheck
